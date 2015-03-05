@@ -28,9 +28,9 @@ function Notifier(opts) {
         self.emit('error', err);
     });
     self.cache = {
-        uidlist: []
+        uidList: [],
+        uid2Mail: {}
     };
-    self.seqno2mid = {};
 }
 util.inherits(Notifier, EventEmitter);
 
@@ -59,42 +59,38 @@ Notifier.prototype.start = function () {
 
 Notifier.prototype.scan = function (notifyNew) {
     var self = this;
-    var cached = self.cache;
+    var cache = self.cache;
     self.imap.search(self.options.search || ['UNSEEN'], function (err, seachResults) {
         var deltaNew, deltaDeleted, batch;
         if (err) {
             self.emit('error', err);
         }
-        // normalize the uidlist
-        cached.uidlist = cached.uidlist || [];
-
+        // caching from https://github.com/whiteout-io/imap-client/blob/master/src/imap-client.js
+        cache.uidList = cache.uidList || [];
         // determine deleted uids
-        deltaDeleted = cached.uidlist.filter(function(i) {
+        deltaDeleted = cache.uidList.filter(function(i) {
             return seachResults.indexOf(i) < 0;
         });
-
         // notify about deleted messages
         if (deltaDeleted.length) {
             for (var i=0; i < deltaDeleted.length; i++) {
-                var m = self.seqno2mid[deltaDeleted[i]];
+                var m = cache.uid2Mail[deltaDeleted[i]];
                 if (m) {
-                    self.emit('deletedMail', m)
+                    self.emit('deletedMail', m);
                 }
             }
         }
         deltaNew = seachResults.filter(function(i) {
-            return cached.uidlist.indexOf(i) < 0;
+            return cache.uidList.indexOf(i) < 0;
         }).sort(function(a, b) {
             return b - a;
-        }));
-
+        });
          // notify about new messages in batches of options._maxUpdateSize size
         while (deltaNew.length) {
             batch = deltaNew.splice(0, (self.options._maxUpdateSize || deltaNew.length));
         }
-
         // update mailbox info
-        cached.uidlist = seachResults;
+        cache.uidList = seachResults;
 
         if (!seachResults || seachResults.length === 0) {
             if(!self.options.hideLogs) {
@@ -107,18 +103,21 @@ Notifier.prototype.scan = function (notifyNew) {
             bodies: ''
         });
         fetch.on('message', function (msg, seqno) {
-            var newSeqNo = parseInt(seqno) + parseInt(batch) - 1;
+            var index = seqno - 1;
+            var uid = seachResults[index];
             var mp = new MailParser();
             mp.once('end', function (mail) {
-                self.seqno2mid[newSeqNo] = {
-                    headers: {
-                        'message-id': mail.headers['message-id'],
-                        subject: mail.headers.subject,
-                        from: mail.headers.from
+                if (uid !== undefined) {
+                    if (notifyNew && cache.uid2Mail[uid] === undefined) {
+                        self.emit('mail', mail);
                     }
-                };
-                if (notifyNew) {
-                    self.emit('mail', mail);
+                    cache.uid2Mail[uid] = {
+                        headers: {
+                            'message-id': mail.headers['message-id'],
+                            subject: mail.headers.subject,
+                            from: mail.headers.from
+                        }
+                    };
                 }
             });
             msg.once('body', function (stream, info) {
