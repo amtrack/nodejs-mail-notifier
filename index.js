@@ -20,11 +20,30 @@ function Notifier(opts) {
     self.hideLogs = !!self.options.hideLogs;
     self.connected = false;
     self.imap = new Imap(opts);
+
+    self.imap.once('ready', function () {
+        self.connected = true;
+        self.imap.openBox(self.options.box, false, function () {
+            self.scan(self.options.emitOnStartup);
+            self.imap.on('mail', function (id) {
+                self.scan(true);
+            });
+            self.imap.on('expunge', function (id) {
+                self.scan(true);
+            });
+        });
+    });
+
     self.imap.on('end', function () {
         self.connected = false;
         self.emit('end');
     });
+    self.imap.on('close', function() {
+        self.connected = false;
+        self.imap.connect();
+    });
     self.imap.on('error', function (err) {
+        self.connected = false;
         self.emit('error', err);
     });
     self.cache = {
@@ -41,18 +60,6 @@ module.exports = function (opts) {
 
 Notifier.prototype.start = function () {
     var self = this;
-    self.imap.once('ready', function () {
-        self.connected = true;
-        self.imap.openBox(self.options.box, false, function () {
-            self.scan(self.options.emitOnStartup);
-            self.imap.on('mail', function (id) {
-                self.scan(true);
-            });
-            self.imap.on('expunge', function (id) {
-                self.scan(true);
-            });
-        });
-    });
     self.imap.connect();
     return this;
 };
