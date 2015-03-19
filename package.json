@@ -16,7 +16,7 @@
     "url": "git://github.com/jcreigno/nodejs-mail-notifier.git"
   },
   "dependencies": {
-    "imap": "~0.8.9",
+    "imap": "~0.8.14",
     "mailparser": "~0.4"
   },
   "main": "./index.js",
