@@ -44,7 +44,9 @@ function Notifier(opts) {
     });
     self.imap.on('error', function (err) {
         self.connected = false;
-        self.emit('error', err);
+        console.error(err);
+        self.imap.connect();
+        // self.emit('error', err);
     });
     self.cache = {
         uidList: [],
