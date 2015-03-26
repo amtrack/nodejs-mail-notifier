@@ -1,28 +1,26 @@
 /*jslint node: true, vars: true, indent: 4 */
 'use strict';
 
-var util = require('util'),
-    Imap = require('imap'),
+var Imap = require('imap'),
     MailParser = require('mailparser').MailParser,
     EventEmitter = require('events').EventEmitter;
-
 
 function Notifier(opts) {
     EventEmitter.call(this);
     var self = this;
     self.options = opts;
-    if (self.options.username) { //backward compat
-        self.options.user = self.options.username;
-    }
     self.options.box = self.options.box || 'INBOX';
     self.options.emitOnStartup = self.options.emitOnStartup || false;
     self.options._maxUpdateSize = self.options._maxUpdateSize || 20;
     self.hideLogs = !!self.options.hideLogs;
-    self.connected = false;
+    self.cache = {
+        uidList: [],
+        uid2Mail: {}
+    };
+
     self.imap = new Imap(opts);
 
     self.imap.once('ready', function () {
-        self.connected = true;
         self.imap.openBox(self.options.box, false, function () {
             self.scan(self.options.emitOnStartup);
             self.imap.on('mail', function (id) {
@@ -35,30 +33,21 @@ function Notifier(opts) {
     });
 
     self.imap.on('end', function () {
-        self.connected = false;
         self.emit('end');
     });
     self.imap.on('close', function() {
-        self.connected = false;
-        self.imap.connect();
+        self.emit('close');
     });
     self.imap.on('error', function (err) {
-        self.connected = false;
-        console.error(err);
-        self.imap.connect();
-        // self.emit('error', err);
+        self.emit('error', err);
     });
-    self.cache = {
-        uidList: [],
-        uid2Mail: {}
-    };
 }
-util.inherits(Notifier, EventEmitter);
+
+Notifier.prototype.__proto__ = EventEmitter.prototype;
 
 module.exports = function (opts) {
     return new Notifier(opts);
 };
-
 
 Notifier.prototype.start = function () {
     var self = this;
@@ -103,7 +92,7 @@ Notifier.prototype.scan = function (notifyNew) {
 
         if (!seachResults || seachResults.length === 0) {
             if(!self.options.hideLogs) {
-                util.log('no new mail in ' + self.options.box);
+                console.log('no new mail in ' + self.options.box);
             }
             return;
         }
@@ -135,7 +124,7 @@ Notifier.prototype.scan = function (notifyNew) {
         });
         fetch.once('end', function () {
             if(!self.options.hideLogs) {
-                util.log('Done fetching all messages!');
+                console.log('Done fetching all messages!');
             }
         });
         fetch.on('error', function () {
@@ -146,8 +135,6 @@ Notifier.prototype.scan = function (notifyNew) {
 };
 
 Notifier.prototype.stop = function () {
-    if (this.connected) {
-        this.imap.end();
-    }
+    this.imap.end();
     return this;
 };
