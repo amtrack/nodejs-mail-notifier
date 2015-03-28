@@ -1,49 +1,31 @@
 /*jslint node: true, vars: true, indent: 4 */
 'use strict';
 
-var Imap = require('imap'),
-    MailParser = require('mailparser').MailParser,
-    EventEmitter = require('events').EventEmitter;
+var ImapClient = require('imap-client');
+var EventEmitter = require('events');
+var util = require('util');
 
-function Notifier(opts) {
-    EventEmitter.call(this);
+var SYNC_TYPE_NEW = 'new';
+var SYNC_TYPE_DELETED = 'deleted';
+var SYNC_TYPE_MSGS = 'messages';
+
+function Notifier (opts) {
     var self = this;
+    EventEmitter.call(self);
     self.options = opts;
+    opts.auth = { user: opts.user, pass: opts.password};
+    opts.secure = true;
     self.options.box = self.options.box || 'INBOX';
     self.options.emitOnStartup = self.options.emitOnStartup || false;
     self.options._maxUpdateSize = self.options._maxUpdateSize || 20;
     self.hideLogs = !!self.options.hideLogs;
     self.cache = {
-        uidList: [],
         uid2Mail: {}
     };
-
-    self.imap = new Imap(opts);
-
-    self.imap.once('ready', function () {
-        self.imap.openBox(self.options.box, false, function () {
-            self.scan(self.options.emitOnStartup);
-            self.imap.on('mail', function (id) {
-                self.scan(true);
-            });
-            self.imap.on('expunge', function (id) {
-                self.scan(true);
-            });
-        });
-    });
-
-    self.imap.on('end', function () {
-        self.emit('end');
-    });
-    self.imap.on('close', function() {
-        self.emit('close');
-    });
-    self.imap.on('error', function (err) {
-        self.emit('error', err);
-    });
+    self.imap = new ImapClient(opts);
 }
 
-Notifier.prototype.__proto__ = EventEmitter.prototype;
+util.inherits(Notifier, EventEmitter);
 
 module.exports = function (opts) {
     return new Notifier(opts);
@@ -51,90 +33,63 @@ module.exports = function (opts) {
 
 Notifier.prototype.start = function () {
     var self = this;
-    self.imap.connect();
-    return this;
+    self.imap.login().then(function () {
+        self.scan(true);
+        // TODO: make this work
+        // self.scan(self.options.emitOnStartup);
+    });
+    return self;
 };
 
 Notifier.prototype.scan = function (notifyNew) {
     var self = this;
     var cache = self.cache;
-    self.imap.search(self.options.search || ['UNSEEN'], function (err, seachResults) {
-        var deltaNew, deltaDeleted, batch;
-        if (err) {
-            self.emit('error', err);
+    self.imap.onSyncUpdate = function (options) {
+        var updatedMesages = options.list;
+        var updatesMailbox = options.path;
+        if (options.type === SYNC_TYPE_NEW) {
+            console.log('new: ' + updatedMesages);
+            updatedMesages.forEach(function(updatedMessage){
+                self.imap.listMessages({path: self.options.box, firstUid: updatedMessage, lastUid: updatedMessage}).then(function(messages){
+                    messages.forEach(function(message){
+                        var m = browserbox2bipio(message);
+                        if (notifyNew && !cache.uid2Mail[message.uid]) {
+                            self.emit('mail', m);
+                        }
+                        cache.uid2Mail[message.uid] = m;
+                    });
+                });
+            });
         }
-        // caching from https://github.com/whiteout-io/imap-client/blob/master/src/imap-client.js
-        cache.uidList = cache.uidList || [];
-        // determine deleted uids
-        deltaDeleted = cache.uidList.filter(function(i) {
-            return seachResults.indexOf(i) < 0;
-        });
-        // notify about deleted messages
-        if (deltaDeleted.length) {
-            for (var i=0; i < deltaDeleted.length; i++) {
-                var m = cache.uid2Mail[deltaDeleted[i]];
+        else if (options.type === SYNC_TYPE_DELETED) {
+            console.log('deleted: ' + updatedMesages);
+            updatedMesages.forEach(function(updatedMessage){
+                var m = cache.uid2Mail[updatedMessage];
                 if (m) {
                     self.emit('deletedMail', m);
                 }
-            }
-        }
-        deltaNew = seachResults.filter(function(i) {
-            return cache.uidList.indexOf(i) < 0;
-        }).sort(function(a, b) {
-            return b - a;
-        });
-         // notify about new messages in batches of options._maxUpdateSize size
-        while (deltaNew.length) {
-            batch = deltaNew.splice(0, (self.options._maxUpdateSize || deltaNew.length));
-        }
-        // update mailbox info
-        cache.uidList = seachResults;
-
-        if (!seachResults || seachResults.length === 0) {
-            if(!self.options.hideLogs) {
-                console.log('no new mail in ' + self.options.box);
-            }
-            return;
-        }
-        var fetch = self.imap.fetch(seachResults, {
-            markSeen: self.options.markSeen !== false,
-            bodies: ''
-        });
-        fetch.on('message', function (msg, seqno) {
-            var index = seqno - 1;
-            var uid = seachResults[index];
-            var mp = new MailParser();
-            mp.once('end', function (mail) {
-                if (uid !== undefined) {
-                    if (notifyNew && cache.uid2Mail[uid] === undefined) {
-                        self.emit('mail', mail);
-                    }
-                    cache.uid2Mail[uid] = {
-                        headers: {
-                            'message-id': mail.headers['message-id'],
-                            subject: mail.headers.subject,
-                            from: mail.headers.from
-                        }
-                    };
-                }
             });
-            msg.once('body', function (stream, info) {
-                stream.pipe(mp);
-            });
-        });
-        fetch.once('end', function () {
-            if(!self.options.hideLogs) {
-                console.log('Done fetching all messages!');
-            }
-        });
-        fetch.on('error', function () {
-            self.emit('error', err);
-        });
+        }
+    };
+    self.imap.listWellKnownFolders(function(folders){
+        console.log('folders: '+folders);
     });
-    return this;
+    self.imap.listenForChanges({path: self.options.box}, function() {
+        console.log('listening for changes');
+    });
+    return self;
 };
 
 Notifier.prototype.stop = function () {
-    this.imap.end();
-    return this;
+    var self = this;
+    self.imap.stopListeningForChanges();
+    return self;
+};
+
+var browserbox2bipio = function (mail) {
+    return {
+        "Message-ID": mail.id,
+        "Subject": mail.subject,
+        "From": mail.from
+    };
 };
