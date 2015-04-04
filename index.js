@@ -135,6 +135,7 @@ Notifier.prototype.scan = function (notifyNew) {
 };
 
 Notifier.prototype.stop = function () {
+    this.imap.destroy();
     this.imap.end();
     return this;
 };
