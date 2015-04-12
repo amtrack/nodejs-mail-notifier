@@ -17,30 +17,34 @@ function Notifier(opts) {
         uidList: [],
         uid2Mail: {}
     };
+}
 
-    self.imap = new Imap(opts);
+Notifier.prototype.getImap = function() {
+    var self = this;
+    var imap = new Imap(self.options);
 
-    self.imap.once('ready', function () {
-        self.imap.openBox(self.options.box, false, function () {
+    imap.once('ready', function () {
+        imap.openBox(self.options.box, false, function () {
             self.scan(self.options.emitOnStartup);
-            self.imap.on('mail', function (id) {
+            imap.on('mail', function (id) {
                 self.scan(true);
             });
-            self.imap.on('expunge', function (id) {
+            imap.on('expunge', function (id) {
                 self.scan(true);
             });
         });
     });
 
-    self.imap.on('end', function () {
+    imap.on('end', function () {
         self.emit('end');
     });
-    self.imap.on('close', function() {
+    imap.on('close', function() {
         self.emit('close');
     });
-    self.imap.on('error', function (err) {
+    imap.on('error', function (err) {
         self.emit('error', err);
     });
+    return imap;
 }
 
 Notifier.prototype.__proto__ = EventEmitter.prototype;
@@ -51,8 +55,9 @@ module.exports = function (opts) {
 
 Notifier.prototype.start = function () {
     var self = this;
+    self.imap = self.getImap();
     self.imap.connect();
-    return this;
+    return self;
 };
 
 Notifier.prototype.scan = function (notifyNew) {
@@ -131,11 +136,12 @@ Notifier.prototype.scan = function (notifyNew) {
             self.emit('error', err);
         });
     });
-    return this;
+    return self;
 };
 
 Notifier.prototype.stop = function () {
-    this.imap.destroy();
-    this.imap.end();
-    return this;
+    var self = this;
+    self.imap.destroy();
+    self.imap.end();
+    return self;
 };
