@@ -24,9 +24,12 @@ Notifier.prototype.getImap = function() {
     var imap = new Imap(self.options);
 
     imap.once('ready', function () {
+        console.log("READY");
         imap.openBox(self.options.box, false, function () {
-            self.scan(self.options.emitOnStartup);
+            console.log("BOX OPENED");
+            // self.scan(self.options.emitOnStartup);
             imap.on('mail', function (id) {
+                console.log("MAIL RECEIVED");
                 self.scan(true);
             });
             imap.on('expunge', function (id) {
@@ -53,14 +56,20 @@ module.exports = function (opts) {
     return new Notifier(opts);
 };
 
-Notifier.prototype.start = function () {
+Notifier.prototype.start = function(cb) {
     var self = this;
     self.imap = self.getImap();
     self.imap.connect();
-    return self;
+    if (cb) {
+        self.imap.once('ready', cb);
+    }
+    else {
+        return self;
+    }
 };
 
 Notifier.prototype.scan = function (notifyNew) {
+    console.log("starting scan");
     var self = this;
     var cache = self.cache;
     self.imap.search(self.options.search || ['UNSEEN'], function (err, seachResults) {
