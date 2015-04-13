@@ -24,12 +24,9 @@ Notifier.prototype.getImap = function() {
     var imap = new Imap(self.options);
 
     imap.once('ready', function () {
-        console.log("READY");
         imap.openBox(self.options.box, false, function () {
-            console.log("BOX OPENED");
             // self.scan(self.options.emitOnStartup);
             imap.on('mail', function (id) {
-                console.log("MAIL RECEIVED");
                 self.scan(true);
             });
             imap.on('expunge', function (id) {
@@ -69,7 +66,6 @@ Notifier.prototype.start = function(cb) {
 };
 
 Notifier.prototype.scan = function (notifyNew) {
-    console.log("starting scan");
     var self = this;
     var cache = self.cache;
     self.imap.search(self.options.search || ['UNSEEN'], function (err, seachResults) {
@@ -106,7 +102,7 @@ Notifier.prototype.scan = function (notifyNew) {
 
         if (!seachResults || seachResults.length === 0) {
             if(!self.options.hideLogs) {
-                console.log('no new mail in ' + self.options.box);
+                // console.log('no new mail in ' + self.options.box);
             }
             return;
         }
@@ -123,6 +119,9 @@ Notifier.prototype.scan = function (notifyNew) {
                     if (notifyNew && cache.uid2Mail[uid] === undefined) {
                         self.emit('mail', mail);
                     }
+                    if (mail.headers['message-id'] === undefined) {
+                        mail.headers['message-id'] = mail.headers.from + mail.headers.subject;
+                    }
                     cache.uid2Mail[uid] = {
                         headers: {
                             'message-id': mail.headers['message-id'],
@@ -137,8 +136,9 @@ Notifier.prototype.scan = function (notifyNew) {
             });
         });
         fetch.once('end', function () {
+            // self.imap.end(); this will prevent IDLE
             if(!self.options.hideLogs) {
-                console.log('Done fetching all messages!');
+                // console.log('Done fetching all messages!');
             }
         });
         fetch.on('error', function () {
@@ -148,9 +148,24 @@ Notifier.prototype.scan = function (notifyNew) {
     return self;
 };
 
-Notifier.prototype.stop = function () {
+Notifier.prototype.stop = function (cb) {
     var self = this;
-    self.imap.destroy();
-    self.imap.end();
-    return self;
+    try {
+        self.imap.destroy();
+    }
+    catch (ex) {
+        console.error(ex);
+    }
+    try {
+        self.imap.end();
+    }
+    catch (ex) {
+        console.error(ex);
+    }
+    if (cb) {
+        cb();
+    }
+    else {
+        return self;
+    }
 };
