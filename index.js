@@ -17,35 +17,9 @@ function Notifier(opts) {
         uidList: [],
         uid2Mail: {}
     };
-}
+    self.connected = false;
+};
 
-Notifier.prototype.getImap = function() {
-    var self = this;
-    var imap = new Imap(self.options);
-
-    imap.once('ready', function () {
-        imap.openBox(self.options.box, false, function () {
-            // self.scan(self.options.emitOnStartup);
-            imap.on('mail', function (id) {
-                self.scan(true);
-            });
-            imap.on('expunge', function (id) {
-                self.scan(true);
-            });
-        });
-    });
-
-    imap.on('end', function () {
-        self.emit('end');
-    });
-    imap.on('close', function() {
-        self.emit('close');
-    });
-    imap.on('error', function (err) {
-        self.emit('error', err);
-    });
-    return imap;
-}
 
 Notifier.prototype.__proto__ = EventEmitter.prototype;
 
@@ -53,31 +27,71 @@ module.exports = function (opts) {
     return new Notifier(opts);
 };
 
-Notifier.prototype.start = function(cb) {
+Notifier.prototype.createConnection = function() {
     var self = this;
-    self.imap = self.getImap();
-    self.imap.connect();
-    if (cb) {
-        self.imap.once('ready', cb);
-    }
-    else {
-        return self;
-    }
+    self.imap = new Imap(self.options);
+    self.imap.once('ready', function () {
+        self.imap.openBox(self.options.box, false, function () {
+            self.imap.on('mail', function (id) {
+                self.scan(true, function(){
+                    console.log('scanning for starred mail done');
+                });
+            });
+            self.imap.on('expunge', function (id) {
+                self.scan(true, function(){
+                    console.log('scanning for unstarred mail done');
+                });
+            });
+            self.scan(self.options.emitOnStartup, function() {
+                console.log('first scan done');
+                self.emit('firstScanDone');
+            });
+        });
+    });
+    self.imap.once('end', function () {
+        if (self.connected) {
+            self.start();
+        }
+    });
+    self.imap.once('error', function () {
+        console.error('error');
+        if (self.connected) {
+            setTimeout(function() {
+                self.start();
+            }, 5000);
+        }
+    });
 };
 
-Notifier.prototype.scan = function (notifyNew) {
+Notifier.prototype.start = function(cb) {
+    var self = this;
+    self.createConnection();
+    self.imap.connect();
+    self.on('firstScanDone', function() {
+    // self.imap.once('ready', function() {
+        self.connected = true;
+        if (cb) { cb(); } else { return; }
+    });
+};
+
+Notifier.prototype.getImapClient = function () {
+    return self.imap;
+};
+
+Notifier.prototype.scan = function (notifyNew, cb) {
     var self = this;
     var cache = self.cache;
-    self.imap.search(self.options.search || ['UNSEEN'], function (err, seachResults) {
+    self.imap.search(self.options.search || ['UNSEEN'], function (err, searchResults) {
         var deltaNew, deltaDeleted, batch;
         if (err) {
             self.emit('error', err);
+            if (cb) { cb(); } else { return; }
         }
         // caching from https://github.com/whiteout-io/imap-client/blob/master/src/imap-client.js
         cache.uidList = cache.uidList || [];
         // determine deleted uids
         deltaDeleted = cache.uidList.filter(function(i) {
-            return seachResults.indexOf(i) < 0;
+            return searchResults.indexOf(i) < 0;
         });
         // notify about deleted messages
         if (deltaDeleted.length) {
@@ -88,7 +102,7 @@ Notifier.prototype.scan = function (notifyNew) {
                 }
             }
         }
-        deltaNew = seachResults.filter(function(i) {
+        deltaNew = searchResults.filter(function(i) {
             return cache.uidList.indexOf(i) < 0;
         }).sort(function(a, b) {
             return b - a;
@@ -98,74 +112,66 @@ Notifier.prototype.scan = function (notifyNew) {
             batch = deltaNew.splice(0, (self.options._maxUpdateSize || deltaNew.length));
         }
         // update mailbox info
-        cache.uidList = seachResults;
+        cache.uidList = searchResults;
 
-        if (!seachResults || seachResults.length === 0) {
-            if(!self.options.hideLogs) {
-                // console.log('no new mail in ' + self.options.box);
-            }
-            return;
-        }
-        var fetch = self.imap.fetch(seachResults, {
-            markSeen: self.options.markSeen !== false,
-            bodies: ''
-        });
-        fetch.on('message', function (msg, seqno) {
-            var index = seqno - 1;
-            var uid = seachResults[index];
-            var mp = new MailParser();
-            mp.once('end', function (mail) {
-                if (uid !== undefined) {
-                    if (notifyNew && cache.uid2Mail[uid] === undefined) {
-                        self.emit('mail', mail);
-                    }
-                    if (mail.headers['message-id'] === undefined) {
-                        mail.headers['message-id'] = mail.headers.from + mail.headers.subject;
-                    }
-                    cache.uid2Mail[uid] = {
-                        headers: {
-                            'message-id': mail.headers['message-id'],
-                            subject: mail.headers.subject,
-                            from: mail.headers.from
+        if (searchResults instanceof Array && searchResults.length > 0) {
+            var fetch = self.imap.fetch(searchResults, {
+                markSeen: self.options.markSeen !== false,
+                bodies: ''
+            });
+            var collectedMessages = 0;
+            fetch.on('message', function (msg, seqno) {
+                var index = seqno - 1;
+                var uid = searchResults[index];
+                var mp = new MailParser();
+                mp.once('end', function (mail) {
+                    if (uid !== undefined) {
+                        collectedMessages++;
+                        if (mail.headers['message-id'] === undefined) {
+                            mail.headers['message-id'] = mail.headers.from + mail.headers.subject;
                         }
-                    };
-                }
+                        var emit = false;
+                        if (notifyNew && cache.uid2Mail[uid] === undefined) {
+                            emit = true;
+                        }
+                        cache.uid2Mail[uid] = {
+                            headers: {
+                                'message-id': mail.headers['message-id'],
+                                subject: mail.headers.subject,
+                                from: mail.headers.from
+                            }
+                        };
+                        if (emit) {
+                            self.emit('mail', mail);
+                        }
+                        if (collectedMessages >= searchResults.length) {
+                            console.log('all messages parsed');
+                            if (cb) { cb(); } else { return; }
+                        }
+                    }
+                });
+                msg.once('body', function (stream, info) {
+                    stream.pipe(mp);
+                });
             });
-            msg.once('body', function (stream, info) {
-                stream.pipe(mp);
-            });
-        });
-        fetch.once('end', function () {
-            // self.imap.end(); this will prevent IDLE
-            if(!self.options.hideLogs) {
-                // console.log('Done fetching all messages!');
-            }
-        });
-        fetch.on('error', function () {
-            self.emit('error', err);
-        });
+        }
+        else {
+            console.log('no new mail');
+            if (cb) { cb(); } else { return; }
+        }
     });
-    return self;
 };
 
 Notifier.prototype.stop = function (cb) {
     var self = this;
-    try {
-        self.imap.destroy();
-    }
-    catch (ex) {
-        console.error(ex);
-    }
-    try {
+    if (self.connected) {
+        self.connected = false;
+        self.imap.once('end', function () {
+            if (cb) { cb(); } else { return; }
+        });
         self.imap.end();
     }
-    catch (ex) {
-        console.error(ex);
-    }
-    if (cb) {
-        cb();
-    }
     else {
-        return self;
+        if (cb) { cb(); } else { return; }
     }
 };

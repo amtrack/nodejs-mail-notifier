@@ -69,12 +69,40 @@ var notifyImapOptions = {
     markSeen: false
 };
 
-describe('Notifier', function() {
+describe('Notifier Basics', function() {
+    var server, mailListener;
+
+    beforeEach(function(done){
+        server = hoodiecrow(hoodiecrowOptions);
+        server.listen(PORT, function() {
+            done();
+        });
+    });
+
+    afterEach(function(done) {
+        server.close(done);
+    });
+
+    describe('#start() and stop()', function(){
+        it('should start and gracefully stop server', function(done){
+            mailListener = new Notifier(imapOptions);
+            mailListener.start(function() {
+                mailListener.stop(function(){
+                    assert(true);
+                    done();
+                });
+            });
+        });
+    });
+});
+
+describe('Notifier Events', function() {
     var server, imapClient, mailListener;
 
     beforeEach(function(done){
         imapClient = new Imap(imapOptions);
         mailListener = new Notifier(imapOptions);
+        mailListener.on('error', console.error);
         server = hoodiecrow(hoodiecrowOptions);
         server.listen(PORT, function() {
             imapClient.once("ready", done);
@@ -84,8 +112,10 @@ describe('Notifier', function() {
 
     afterEach(function(done) {
         mailListener.stop(function(){
+            imapClient.once('end', function() {
+                server.close(done);
+            });
             imapClient.end();
-            server.close(done);
         });
     });
 
@@ -104,15 +134,14 @@ describe('Notifier', function() {
 
     describe('#emit(deletedMail)', function(){
         it('should emit deletedMail event when mail has been unflagged', function(done){
-            var mailListener = new Notifier(imapOptions);
             mailListener.on("deletedMail", function(mail) {
-                assert("new starred mail", mail.headers.subject);
+                assert("new starred mail2", mail.headers.subject);
                 done();
             });
             mailListener.start(function(){
-                imapClient.append("From: sender <sender@example.com>\r\nTo: receiver@example.com\r\nSubject: new starred mail", {mailbox: "INBOX", flags: ['Flagged']}, function(err, uid) {
-                    imapClient.openBox("INBOX", false, function(err, box){
-                        imapClient.search(['ALL', ['SUBJECT', "new starred mail"]], function(err, results){
+                imapClient.openBox("INBOX", false, function(err, box){
+                    imapClient.append("From: sender <sender@example.com>\r\nTo: receiver@example.com\r\nSubject: new starred mail2", {flags: ['Flagged']}, function(err, uid) {
+                        imapClient.search(['ALL', ['SUBJECT', "new starred mail2"]], function(err, results){
                             imapClient.setFlags(results, ['Deleted'], function(err){
                                 // imapClient.expunge(function(err){
                                 //     if (err) {console.error(err);}
@@ -127,4 +156,4 @@ describe('Notifier', function() {
             });
         });
     });
-})
+});
