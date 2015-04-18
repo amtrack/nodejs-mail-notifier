@@ -49,13 +49,16 @@ Notifier.prototype.createConnection = function() {
         });
     });
     self.imap.once('end', function () {
+        console.log('imap end, connected: ' + self.connected);
         if (self.connected) {
+            console.log('restarting');
             self.start();
         }
     });
-    self.imap.once('error', function () {
-        console.error('error');
+    self.imap.once('error', function (err) {
+        console.error('error: ' + err + ', connected:' + self.connected);
         if (self.connected) {
+            console.log('restarting in 5');
             setTimeout(function() {
                 self.start();
             }, 5000);
@@ -69,6 +72,7 @@ Notifier.prototype.start = function(cb) {
     self.imap.connect();
     self.on('firstScanDone', function() {
     // self.imap.once('ready', function() {
+        console.log('firstScanDone');
         self.connected = true;
         if (cb) { cb(); } else { return; }
     });
