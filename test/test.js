@@ -50,6 +50,8 @@ var hoodiecrowOptions = {
 };
 
 const PORT = 1143;
+const BOX = "[Gmail]/Starred";
+
 var imapOptions = {
     user: "testuser",
     password: "testpass",
@@ -58,25 +60,18 @@ var imapOptions = {
     tls: false
 };
 
-var notifyImapOptions = {
-    user: "testuser",
-    password: "testpass",
-    host: "localhost",
-    port: PORT,
-    box: "[Gmail]/Starred",
-    tls: false,
-    search: ['ALL'],
-    markSeen: false
-};
+var notifyImapOptions = JSON.parse(JSON.stringify(imapOptions));
+notifyImapOptions.box = BOX;
+notifyImapOptions.search = ['ALL'];
+notifyImapOptions.markSeen = false;
 
 describe('Notifier Basics', function() {
     var server, mailListener;
 
     beforeEach(function(done){
         server = hoodiecrow(hoodiecrowOptions);
-        server.listen(PORT, function() {
-            done();
-        });
+        server.listen(PORT);
+        done();
     });
 
     afterEach(function(done) {
@@ -85,7 +80,7 @@ describe('Notifier Basics', function() {
 
     describe('#start() and stop()', function(){
         it('should start and gracefully stop server', function(done){
-            mailListener = new Notifier(imapOptions);
+            mailListener = new Notifier(notifyImapOptions);
             mailListener.start(function() {
                 mailListener.stop(function(){
                     assert(true);
@@ -101,13 +96,12 @@ describe('Notifier Events', function() {
 
     beforeEach(function(done){
         imapClient = new Imap(imapOptions);
-        mailListener = new Notifier(imapOptions);
+        mailListener = new Notifier(notifyImapOptions);
         mailListener.on('error', console.error);
         server = hoodiecrow(hoodiecrowOptions);
-        server.listen(PORT, function() {
-            imapClient.once("ready", done);
-            imapClient.connect();
-        });
+        server.listen(PORT);
+        imapClient.once("ready", done);
+        imapClient.connect();
     });
 
     afterEach(function(done) {
@@ -126,7 +120,7 @@ describe('Notifier Events', function() {
                 done();
             });
             mailListener.start(function(){
-                imapClient.append("From: sender <sender@example.com>\r\nTo: receiver@example.com\r\nSubject: new starred mail", {mailbox: "INBOX", flags: ['Flagged']}, function(err, uid) {
+                imapClient.append("From: sender <sender@example.com>\r\nTo: receiver@example.com\r\nSubject: new starred mail", {mailbox: BOX, flags: ['Flagged']}, function(err, uid) {
                 });
             });
         });
@@ -139,13 +133,10 @@ describe('Notifier Events', function() {
                 done();
             });
             mailListener.start(function(){
-                imapClient.openBox("INBOX", false, function(err, box){
+                imapClient.openBox(BOX, false, function(err, box){
                     imapClient.append("From: sender <sender@example.com>\r\nTo: receiver@example.com\r\nSubject: new starred mail2", {flags: ['Flagged']}, function(err, uid) {
                         imapClient.search(['ALL', ['SUBJECT', "new starred mail2"]], function(err, results){
                             imapClient.setFlags(results, ['Deleted'], function(err){
-                                // imapClient.expunge(function(err){
-                                //     if (err) {console.error(err);}
-                                // });
                                 imapClient.closeBox(true, function(err) {
                                     if (err) {console.error(err);}
                                 });
