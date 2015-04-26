@@ -174,7 +174,11 @@ Notifier.prototype.stop = function (cb) {
     var self = this;
     if (self.connected) {
         self.connected = false;
+        var stopTimeout = setTimeout(function() {
+            if (cb) { cb("stop timed out"); } else { return; }
+        }, 5000);
         self.imap.once('end', function () {
+            clearTimeout(stopTimeout);
             if (cb) { cb(); } else { return; }
         });
         self.imap.end();
