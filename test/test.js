@@ -1,7 +1,7 @@
 var assert = require("assert");
 var Notifier = require("../");
 var Imap = require('imap');
-var hoodiecrow = require("hoodiecrow");
+var hoodiecrow = require("hoodiecrow-imap");
 
 var specialFolders = {
     "separator": "/",

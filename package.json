@@ -24,7 +24,7 @@
   },
   "main": "./index.js",
   "devDependencies": {
-    "hoodiecrow": "^1.1.21",
+    "hoodiecrow-imap": "^2.1.0",
     "mocha": "^2.2.4"
   }
 }
